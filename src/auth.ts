@@ -169,7 +169,7 @@ function callbackPage(text: string): string {
 <p>${escaped}</p><script>setTimeout(() => window.close(), 1500)</script>`;
 }
 
-function openInBrowser(url: string): void {
+export function openInBrowser(url: string): void {
   const [command, args] =
     process.platform === "darwin"
       ? ["open", [url]]

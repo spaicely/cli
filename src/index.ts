@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
 import { Command, Option } from "commander";
-import { login, logout, serverUrl } from "./auth.js";
+import { login, logout, openInBrowser, serverUrl } from "./auth.js";
 import { Spaicely, withSpaicely } from "./client.js";
 import { detectGenerator, loadConfig, writeConfig, type Config } from "./config.js";
 import { readCredentials } from "./credentials.js";
 import { build, hasChanges, plan, upload } from "./deploy.js";
+import { connect, connectionText, dnsLines, foundRecordLines, newRecord, search, searchLines, type Connection, type DnsRecord } from "./domains.js";
 import { CliError, EXIT } from "./errors.js";
 import { humanSize } from "./files.js";
 import { setLocale, t } from "./i18n.js";
@@ -205,6 +206,162 @@ program
     say(t("serving", { dir: dir ?? config.dir, url }));
     if (jsonMode()) result("", { url, root });
   });
+
+const domains = program.command("domains").description("search, register, move and connect domains");
+
+domains
+  .command("search <names...>")
+  .description("is a name free? Works without signing in")
+  .option("-e, --ext <extensions>", "extensions, such as nl,com,eu")
+  .option("--verify", "ask the registry too (at most 10 domains)")
+  .action(async (names: string[], options: { ext?: string; verify?: boolean }) => {
+    const results = await search(names, { extensions: options.ext, verify: options.verify });
+    result(searchLines(results), results);
+    if (!options.verify && results.some((found) => found.reason === "dns_only")) {
+      say(`\n${t("search_verify_hint", { names: [...names, ...(options.ext ? ["-e", options.ext] : [])].join(" ") })}`);
+    }
+  });
+
+domains
+  .command("register <domain>")
+  .description("register a domain in the name of your account")
+  .option("--holder-name <name>", "holder, as the registry records it (only needed the first time)")
+  .option("--organization <organization>")
+  .option("--email <email>")
+  .option("--phone <phone>", "with country code, such as +31 6 12345678")
+  .option("--street <street>", "street and house number")
+  .option("--postal-code <code>")
+  .option("--city <city>")
+  .option("--country <code>", "two letters, such as NL")
+  .option("-y, --yes", "do not ask")
+  .action((domain: string, options: Record<string, string | boolean | undefined>) =>
+    withSpaicely(async (spaicely) => {
+      const fields = { name: "holderName", organization: "organization", email: "email", phone: "phone", street: "street", postal_code: "postalCode", city: "city", country_code: "country" };
+      const contact = Object.fromEntries(Object.entries(fields).flatMap(([field, option]) => (options[option] ? [[field, options[option]]] : [])));
+      const quote = await spaicely.call<{ name: string; holder_account: string; holder: Record<string, string>; confirmation: string }>(
+        "domains.register",
+        { name: domain, ...(Object.keys(contact).length ? { contact } : {}) },
+      );
+      const { name, holder_account: account, holder, confirmation } = quote.data;
+      say(t("register_holder", { holder: [holder.name, holder.organization].filter(Boolean).join(", "), account }));
+      if (!(await confirm(t("register_confirm", { domain: name }), Boolean(options.yes)))) {
+        result(t("aborted"), { registered: false });
+        return;
+      }
+      const { summary, data } = await spaicely.call("domains.register", { name, confirmation });
+      result(summary, data);
+    }),
+  );
+
+domains
+  .command("transfer <domain>")
+  .description("move a domain to Spaicely; the transfer code goes in the browser, not here")
+  .option("--no-browser", "print the address instead of opening the browser")
+  .action((domain: string, options: { browser: boolean }) =>
+    withSpaicely(async (spaicely) => {
+      const { data } = await spaicely.call<{ name: string; url: string }>("domains.transfer", { name: domain });
+      if (options.browser && !jsonMode()) openInBrowser(data.url);
+      result(`${t("transfer_open")}\n${data.url}`, data);
+    }),
+  );
+
+domains
+  .command("connect <domain>")
+  .description("put a site on its domain; run again to see where it stands")
+  .addOption(siteOption())
+  .option("--skip <indexes>", "found records to leave out, such as 2,5")
+  .option("-y, --yes", "take the found records over without asking")
+  .action((domain: string, options: { site?: string; skip?: string; yes?: boolean }) =>
+    withSpaicely(async (spaicely) => {
+      const site = await resolveSite(spaicely, siteFrom(options, loadConfig()));
+      let connection = await connect(spaicely, { site_id: site.id, domain });
+      if (connection.status === "confirming" && connection.records_to_confirm) {
+        const skip = (options.skip ?? "").split(",").filter(Boolean).map(Number);
+        say(`${t("records_found", { domain: connection.domain })}\n${foundRecordLines(connection.records_to_confirm)}\n\n${t("records_missing")}`);
+        if (connection.dkim_mail) say(`\n${t("dkim_mail", { domain: connection.domain, to: connection.dkim_mail.to, subject: connection.dkim_mail.subject })}`);
+        if (!(await confirm(t("records_confirm"), Boolean(options.yes)))) {
+          result(t("aborted"), connection);
+          return;
+        }
+        connection = await connect(spaicely, { site_id: site.id, domain, confirm: true, skip });
+      }
+      result(connectionText(connection), connection);
+    }),
+  );
+
+domains
+  .command("status <domain>")
+  .description("where the connection stands, and the DNS records")
+  .action((domain: string) =>
+    withSpaicely(async (spaicely) => {
+      const { data } = await spaicely.call<Connection>("domains.status", { domain });
+      const records = data.records?.length ? `\n\n${dnsLines(data.records)}` : "";
+      result(`${connectionText(data)}${records}`, data);
+    }),
+  );
+
+domains
+  .command("disconnect <domain>")
+  .description("take the site off the domain; other records stay")
+  .option("-y, --yes", "do not ask")
+  .action((domain: string, options: { yes?: boolean }) =>
+    withSpaicely(async (spaicely) => {
+      if (!(await confirm(t("disconnect_confirm", { domain }), Boolean(options.yes)))) {
+        result(t("aborted"), { disconnected: false });
+        return;
+      }
+      const { data } = await spaicely.call<{ domain: string }>("sites.domains.disconnect", { domain });
+      result(t("disconnected", { domain: data.domain }), data);
+    }),
+  );
+
+const dns = program.command("dns").description("the DNS records of a domain hosted at Spaicely");
+
+dns
+  .command("list <domain>", { isDefault: true })
+  .alias("ls")
+  .description("the records Spaicely serves for the domain")
+  .action((domain: string) =>
+    withSpaicely(async (spaicely) => {
+      const { data } = await spaicely.call<Connection>("domains.status", { domain });
+      const records = data.records ?? [];
+      result(records.length ? dnsLines(records) : t("no_records"), records);
+    }),
+  );
+
+dns
+  .command("add <domain> <type> <name> <value>")
+  .description("add a record; name @ is the domain itself, such as: spaicely dns add example.nl TXT @ \"v=spf1 ...\"")
+  .option("--ttl <seconds>")
+  .option("--priority <number>", "MX and SRV")
+  .option("--weight <number>", "SRV")
+  .option("--port <number>", "SRV")
+  .option("--flags <number>", "CAA")
+  .option("--tag <tag>", "CAA, such as issue")
+  .action((domain: string, type: string, name: string, value: string, options: Record<string, string | undefined>) =>
+    withSpaicely(async (spaicely) => {
+      const record = newRecord(type, name, value, options);
+      const { data } = await spaicely.call<{ domain: string; records: DnsRecord[] }>("domains.dns.update", { domain, add: [record] });
+      result(`${t("dns_updated", { domain: data.domain, count: data.records.length })}\n\n${dnsLines(data.records)}`, data);
+    }),
+  );
+
+dns
+  .command("delete <domain> <ids...>")
+  .alias("rm")
+  .description("delete records by the number spaicely dns list shows")
+  .option("-y, --yes", "do not ask")
+  .action((domain: string, ids: string[], options: { yes?: boolean }) =>
+    withSpaicely(async (spaicely) => {
+      if (ids.some((id) => !/^\d+$/.test(id))) throw new CliError(`id: ${ids.join(" ")}`, EXIT.usage);
+      if (!(await confirm(t("dns_delete_confirm", { domain, count: ids.length }), Boolean(options.yes)))) {
+        result(t("aborted"), { deleted: false });
+        return;
+      }
+      const { data } = await spaicely.call<{ domain: string; records: DnsRecord[] }>("domains.dns.update", { domain, delete: ids.map(Number) });
+      result(`${t("dns_updated", { domain: data.domain, count: data.records.length })}\n\n${dnsLines(data.records)}`, data);
+    }),
+  );
 
 program
   .command("tools")

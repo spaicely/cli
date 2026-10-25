@@ -32,6 +32,14 @@ spaicely deploy                # build and upload a new version
 spaicely publish               # put the newest version live (asks first)
 spaicely rollback              # bring back the version that was live before
 spaicely versions
+spaicely domains search bakkerijjansen -e nl,com   # no sign-in needed; --verify asks the registry
+spaicely domains register bakkerijjansen.nl        # holder details once: --holder-name --email --phone ...
+spaicely domains transfer bakkerijjansen.nl        # opens the browser; the transfer code never touches the terminal
+spaicely domains connect bakkerijjansen.nl --site 12   # shows the records that come along, then the nameservers
+spaicely domains status bakkerijjansen.nl
+spaicely dns ls bakkerijjansen.nl
+spaicely dns add bakkerijjansen.nl TXT @ "google-site-verification=..."
+spaicely dns rm bakkerijjansen.nl 31631305
 spaicely tools                 # every tool on the server
 spaicely call sites.files.list '{"site_id": 12}'
 ```
