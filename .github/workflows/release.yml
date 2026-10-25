@@ -59,16 +59,16 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
+      # Trusted publishing: npm trusts this workflow through OIDC, so there
+      # is no npm token. Needs npm 11.5 or later, hence Node 24.
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
       - run: npm ci
       - run: npm run build
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   homebrew:
     needs: binaries
