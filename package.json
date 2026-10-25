@@ -1,0 +1,47 @@
+{
+  "name": "spaicely",
+  "version": "0.1.0",
+  "description": "Command-line tool for Spaicely: preview, deploy and manage sites hosted on Spaicely",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "spaicely": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spaicely/cli.git"
+  },
+  "homepage": "https://spaicely.com/developers/",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "commander": "^15.0.0",
+    "smol-toml": "^1.9.1",
+    "tar": "^7.5.22"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  },
+  "keywords": [
+    "spaicely",
+    "hosting",
+    "static-site",
+    "deploy",
+    "mcp",
+    "jekyll",
+    "hugo"
+  ]
+}
