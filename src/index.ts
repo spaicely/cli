@@ -398,8 +398,8 @@ function localTime(iso: string): string {
 }
 
 async function publishVersion(spaicely: Spaicely, site: SiteEntry, target: { deployment?: number; rollback?: boolean }, yes: boolean) {
-  const label = target.rollback ? "rollback" : String(target.deployment);
-  if (!(await confirm(t("publish_confirm", { number: label, site: site.name }), yes))) {
+  const question = target.rollback ? t("rollback_confirm", { site: site.name }) : t("publish_confirm", { number: target.deployment ?? "", site: site.name });
+  if (!(await confirm(question, yes))) {
     result(t("aborted"), { published: false });
     return;
   }
